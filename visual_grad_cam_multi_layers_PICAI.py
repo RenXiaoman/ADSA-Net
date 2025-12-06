@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+
+"""Visualize Grad-CAM heatmaps for multiple layers (components) of the SAME model.
+
+Configuration is done directly in this file (no JSON):
+
+- Specify case_id, slice_index, and paths for T2W/ADC/DWI/GT.
+- Specify a single model config with:
+  - name: label used in the figure
+  - checkpoint: path to .pth file
+  - model_type: string key to choose which builder to use
+  - layers: list of attribute paths for modules to visualize
+    e.g. ["conv_head", "encoder1", "BiCR_1.dcgf.refine.conv"]
+
+Layout:
+- Column 1-3: ADC / DWI / T2W with red GT contours only.
+- Column 4..(3+L): Grad-CAM heatmap for each target layer (no GT / pred contours).
+"""
+
+from pathlib import Path
+from typing import List
+
+import numpy as np
+import torch
+import SimpleITK as sitk
+import matplotlib.pyplot as plt
+from skimage import measure
+
+from monai.transforms import ClipIntensityPercentiles
+from pytorch_grad_cam import GradCAM
+
+from Model.as_unetr import ADSA_Net
+from Model.ablation import Backbone_Baseline, Backbone_SAEB, Backbone_ACF, Backbone_MRE, Backbone_MRE_ACF
+
+
+clip = ClipIntensityPercentiles(lower=0.5, upper=99.5, channel_wise=False)
+
+
+def load_nii(path: Path) -> np.ndarray:
+    img = sitk.ReadImage(str(path))
+    arr = sitk.GetArrayFromImage(img)
+    return arr
+
+
+def z_score_normalization(img: np.ndarray) -> np.ndarray:
+    mask = img > 0
+    if np.any(mask):
+        mean_val = np.mean(img[mask])
+        std_val = np.std(img[mask])
+    else:
+        mean_val = np.mean(img)
+        std_val = np.std(img)
+    return (img - mean_val) / (std_val + 1e-8)
+
+
+def preprocess_modalities(t2w_path: Path, adc_path: Path, dwi_path: Path, gt_path: Path):
+    t2w_raw = load_nii(t2w_path).astype(np.float32)
+    adc_raw = load_nii(adc_path).astype(np.float32)
+    dwi_raw = load_nii(dwi_path).astype(np.float32)
+    gt_raw = load_nii(gt_path).astype(np.float32)
+
+    gt_raw[gt_raw > 0] = 1.0
+
+    t2w = z_score_normalization(clip(t2w_raw))
+    adc = z_score_normalization(clip(adc_raw))
+    dwi = z_score_normalization(clip(dwi_raw))
+
+    t2w = t2w[np.newaxis, :]
+    adc = adc[np.newaxis, :]
+    dwi = dwi[np.newaxis, :]
+    gt = gt_raw[np.newaxis, :]
+
+    return adc, dwi, t2w, gt
+
+
+class SemanticSegmentationTarget:
+    def __init__(self, category, mask):
+        self.category = category
+        self.mask = torch.from_numpy(mask)
+        if torch.cuda.is_available():
+            self.mask = self.mask.cuda()
+
+    def __call__(self, model_output):
+        return (model_output[self.category, :, :] * self.mask).sum()
+
+
+def build_model(model_type: str, device: torch.device) -> torch.nn.Module:
+    """Factory for different model architectures.
+
+    You can extend this function with if/elif branches for other model types.
+    """
+
+    if model_type == "Backbone_Baseline":
+        model = Backbone_Baseline(
+            in_channels=2,
+            out_channels=2,
+            img_size=(16, 256, 256),
+            feature_size=16,
+            hidden_size=768,
+            mlp_dim=3072,
+            num_heads=8,
+            norm_name="instance",
+        ).to(device)
+        return model
+    elif model_type == "Backbone_MRE":
+        model = Backbone_MRE(
+            in_channels=2,
+            out_channels=2,
+            img_size=(16, 256, 256),
+            feature_size=16,
+            hidden_size=768,
+            mlp_dim=3072,
+            num_heads=8,
+            norm_name="instance",
+        ).to(device)
+        return model
+    elif model_type == "Backbone_ACF":
+        model = Backbone_ACF(
+            in_channels=2,
+            out_channels=2,
+            img_size=(16, 256, 256),
+            feature_size=16,
+            hidden_size=768,
+            mlp_dim=3072,
+            num_heads=8,
+            norm_name="instance",
+        ).to(device)
+        return model
+    elif model_type == "Backbone_SAEB":
+        model = Backbone_SAEB(
+            in_channels=2,
+            out_channels=2,
+            img_size=(16, 256, 256),
+            feature_size=16,
+            hidden_size=768,
+            mlp_dim=3072,
+            num_heads=8,
+            norm_name="instance",
+        ).to(device)
+        return model
+    elif model_type == "Backbone_MRE_ACF":
+        model = Backbone_MRE_ACF(
+            in_channels=2,
+            out_channels=2,
+            img_size=(16, 256, 256),
+            feature_size=16,
+            hidden_size=768,
+            mlp_dim=3072,
+            num_heads=8,
+            norm_name="instance",
+        ).to(device)
+        return model
+    elif model_type == "ADSA_Net":
+        model = ADSA_Net(
+            in_channels=2,
+            out_channels=2,
+            img_size=(16, 256, 256),
+            feature_size=16,
+            hidden_size=768,
+            mlp_dim=3072,
+            num_heads=8,
+            norm_name="instance",
+        ).to(device)
+        return model
+    raise ValueError(f"Unknown model_type: {model_type}")
+
+
+def _get_attr_by_path(model: torch.nn.Module, path: str) -> torch.nn.Module:
+    """Resolve nested attribute path like "BiCR_1.dcgf.refine.conv" on a model."""
+    cur = model
+    for part in path.split("."):
+        cur = getattr(cur, part)
+    return cur
+
+
+def _fix_adsa_checkpoint_keys(state_dict: dict) -> dict:
+    """Fix ADSA_Net checkpoints where fusion blocks were named gre_dcgf_X instead of BiCR_X.
+
+    Only renames keys containing 'gre_dcgf_'. Other keys are kept unchanged.
+    """
+    new_state = {}
+    for k, v in state_dict.items():
+        if "gre_dcgf_" in k:
+            new_k = k.replace("gre_dcgf_", "BiCR_")
+            new_state[new_k] = v
+        else:
+            new_state[k] = v
+    return new_state
+
+
+# ============================
+# User configuration (edit here)
+# ============================
+
+CASE_ID = "11111_1001134"
+SLICE_INDEX = 6
+
+# Visualization crop size around GT center (in pixels). Set to None to disable cropping.
+CROP_SIZE = None
+
+T2W_PATH = Path(f"dataset/PI-CAI/imagesTs/{CASE_ID}_0000.nii.gz")
+ADC_PATH = Path(f"dataset/PI-CAI/imagesTs/{CASE_ID}_0001.nii.gz")
+DWI_PATH = Path(f"dataset/PI-CAI/imagesTs/{CASE_ID}_0002.nii.gz")
+GT_PATH = Path(f"dataset/PI-CAI/labelsTs/{CASE_ID}.nii.gz")
+
+OUTPUT_DIR = Path("./gradcam_multi_component")
+OUTPUT_FILENAME = f"PICAI-{CASE_ID}_slice{SLICE_INDEX:02d}_gradcam_multi_layers.png"
+SHOW_TITLES = False
+
+# Single model configuration + multiple target layers.
+MODEL_CFG = {
+    "name": "ADSA-Net",
+    "checkpoint": "checkpoints/SegTumor_DIY_PICAI_New_CNN_Encoder/best_dice_model.pth",
+    "model_type": "ADSA_Net",
+    # Attribute paths on the model to visualize
+    "layers": [
+        "conv_head",
+        "encoder1.layer.conv1",
+        "BiCR_1.dcgf.refine.conv",
+    ],
+}
+# ============================
+# User configuration (edit here)
+# ============================
+
+def visualize_case() -> Path:
+    case_id = CASE_ID
+    slice_index = SLICE_INDEX
+
+    t2w_path = T2W_PATH
+    adc_path = ADC_PATH
+    dwi_path = DWI_PATH
+    gt_path = GT_PATH
+
+    cfg = MODEL_CFG
+
+    save_dir = OUTPUT_DIR
+    filename = OUTPUT_FILENAME
+    show_titles = SHOW_TITLES
+    save_dir.mkdir(parents=True, exist_ok=True)
+    output_path = save_dir / filename
+
+    adc, dwi, t2w, gt = preprocess_modalities(t2w_path, adc_path, dwi_path, gt_path)
+
+    num_slices = t2w.shape[1]
+    if not (0 <= slice_index < num_slices):
+        raise ValueError(f"slice_index {slice_index} out of range for depth {num_slices}")
+
+    adc_slice = adc[0, slice_index]
+    dwi_slice = dwi[0, slice_index]
+    t2w_slice = t2w[0, slice_index]
+    gt_slice = (gt[0, slice_index] > 0).astype(np.uint8)
+
+    # Determine crop around GT center if enabled (center computed on full-size GT)
+    def crop_around_center(arr: np.ndarray, cy: int, cx: int, size: int) -> np.ndarray:
+        h, w = arr.shape
+        half = size // 2
+        y1 = max(0, cy - half)
+        y2 = min(h, cy + half)
+        x1 = max(0, cx - half)
+        x2 = min(w, cx + half)
+        return arr[y1:y2, x1:x2]
+
+    use_crop = CROP_SIZE is not None and CROP_SIZE > 0
+    crop_center = None
+    if use_crop and gt_slice.max() > 0:
+        ys, xs = np.where(gt_slice > 0)
+        cy = int(ys.mean())
+        cx = int(xs.mean())
+        crop_center = (cy, cx)
+
+        adc_slice = crop_around_center(adc_slice, cy, cx, CROP_SIZE)
+        dwi_slice = crop_around_center(dwi_slice, cy, cx, CROP_SIZE)
+        t2w_slice = crop_around_center(t2w_slice, cy, cx, CROP_SIZE)
+        gt_slice = crop_around_center(gt_slice, cy, cx, CROP_SIZE)
+
+    image_data = np.concatenate([adc, dwi, t2w], axis=0)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    image_tensor = torch.from_numpy(image_data).unsqueeze(0).to(device)
+
+    mask_for_target = gt[0].astype(np.float32)
+    targets_for_cam = [SemanticSegmentationTarget(1, mask_for_target)]
+
+    # Build and load model once
+    model_name = cfg["name"]
+    ckpt_path = Path(cfg["checkpoint"])
+    model_type = cfg["model_type"]
+    layer_paths: List[str] = cfg["layers"]
+
+    model = build_model(model_type, device)
+    checkpoint = torch.load(ckpt_path, map_location=device, weights_only=True)
+    state_dict = checkpoint.get("model_state_dict", checkpoint)
+
+    if model_type == "ADSA_Net":
+        # state_dict = _fix_adsa_checkpoint_keys(state_dict)
+        model.load_state_dict(state_dict, strict=False)
+    else:
+        model.load_state_dict(state_dict)
+
+    model.eval()
+
+    cam_results = []
+
+    for layer_path in layer_paths:
+        target_layer = _get_attr_by_path(model, layer_path)
+
+        with GradCAM(model=model, target_layers=[target_layer]) as cam:
+            grayscale_cam = cam(input_tensor=image_tensor, targets=targets_for_cam)[0, :]
+
+        if grayscale_cam.shape[0] != num_slices:
+            raise ValueError(
+                f"Grad-CAM depth {grayscale_cam.shape[0]} does not match image depth {num_slices}"
+            )
+
+        cam_slice = grayscale_cam[slice_index]
+
+        # Apply same crop to CAM slice using the precomputed GT center
+        if use_crop and crop_center is not None:
+            cy, cx = crop_center
+            cam_slice = crop_around_center(cam_slice, cy, cx, CROP_SIZE)
+
+        cam_results.append((layer_path, cam_slice))
+
+    n_layers = len(cam_results)
+    n_cols = 3 + n_layers
+    fig, axes = plt.subplots(1, n_cols, figsize=(4 * n_cols, 4))
+
+    if n_cols == 1:
+        axes = [axes]
+
+    modality_slices = [
+        ("ADC", adc_slice),
+        ("DWI", dwi_slice),
+        ("T2W", t2w_slice),
+    ]
+
+    for ax, (mod_name, img_slice) in zip(axes[:3], modality_slices):
+        ax.imshow(img_slice, cmap="gray")
+        if gt_slice.max() > 0:
+            contours = measure.find_contours(gt_slice, 0.5)
+            for contour in contours:
+                ax.plot(contour[:, 1], contour[:, 0], "r-", linewidth=1.5)
+        if show_titles:
+            ax.set_title(f"{mod_name} (slice {slice_index})", fontsize=10)
+        ax.axis("off")
+
+    for idx, (layer_path, cam_slice) in enumerate(cam_results):
+        ax = axes[3 + idx]
+        im = ax.imshow(cam_slice, cmap="jet")
+        if show_titles:
+            ax.set_title(layer_path, fontsize=10)
+        ax.axis("off")
+
+    fig.tight_layout()
+    plt.savefig(output_path, bbox_inches="tight", pad_inches=0.1, dpi=150)
+    plt.close(fig)
+
+    print(
+        f"Saved Grad-CAM multi-layer visualization for case {case_id}, slice {slice_index} -> {output_path}"
+    )
+    return output_path
+
+
+if __name__ == "__main__":
+    visualize_case()
