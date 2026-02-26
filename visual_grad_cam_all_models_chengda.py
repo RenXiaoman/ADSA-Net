@@ -28,13 +28,13 @@ import cv2
 from monai.transforms import ClipIntensityPercentiles
 from pytorch_grad_cam import GradCAM
 
-from Model.as_unetr import ADSA_Net
+from Model.as_unetr import CDSA_Net
 from Model.ablation import Backbone_Baseline, Backbone_SAEB, Backbone_ACF, Backbone_MRE, Backbone_MRE_ACF
 
 
 clip = ClipIntensityPercentiles(lower=0.5, upper=99.5, channel_wise=False)
 
-def fix_adsa_net_checkpoint(state_dict):
+def fix_cdsa_net_checkpoint(state_dict):
     new_state_dict = {}
     for key, value in state_dict.items():
         if 'gre_dcgf_' in key:
@@ -160,8 +160,8 @@ def build_model(model_type: str, device: torch.device) -> torch.nn.Module:
             norm_name="instance",
         ).to(device)
         return model
-    elif model_type == "ADSA_Net":
-        model = ADSA_Net(
+    elif model_type == "CDSA_Net":
+        model = CDSA_Net(
             in_channels=2,  # ADC and DWI modalities
             out_channels=2,  # Background and lesion
             img_size=(16, 256, 256),
@@ -230,7 +230,7 @@ MODELS_CFG = [
     {
         "name": "ADSA-Net",
         "checkpoint": "checkpoints/SegTumor_DIY_New_CNN_Encoder/best_dice_model.pth",
-        "model_type": "ADSA_Net",
+        "model_type": "CDSA_Net",
         "target_layer": "decoder1",
     },
     
@@ -314,9 +314,9 @@ def visualize_case() -> Path:
         model = build_model(model_type, device)
         checkpoint = torch.load(ckpt_path, map_location=device, weights_only=True)
         
-        if model_type == "ADSA_Net":
-            checkpoint = fix_adsa_net_checkpoint(checkpoint["model_state_dict"])
-            fixed_checkpoint = fix_adsa_net_checkpoint(checkpoint)
+        if model_type == "CDSA_Net":
+            checkpoint = fix_cdsa_net_checkpoint(checkpoint["model_state_dict"])
+            fixed_checkpoint = fix_cdsa_net_checkpoint(checkpoint)
             model.load_state_dict(fixed_checkpoint, strict=False)
         else:
             model.load_state_dict(checkpoint["model_state_dict"])

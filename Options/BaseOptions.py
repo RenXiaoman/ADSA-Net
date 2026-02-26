@@ -17,7 +17,7 @@ class BaseOptions():
         """Define the common options that are used in both training and test."""
         # basic parameters
         
-        parser.add_argument('--test_batch', type=int, default=16, help='input test batch size')
+        parser.add_argument('--test_batch', type=int, default=6, help='input test batch size')
         parser.add_argument('--epoch', type=int, default=1000, help='number of epochs with the initial learning rate')
         parser.add_argument('--step', type=int, default=10, help='number of epochs to adjust learning rate')
         parser.add_argument('--lr', type=float, default=5e-4, help='initial learning rate of net for adam')

@@ -14,7 +14,7 @@ import time
 from monai.losses import DiceFocalLoss
 
 #### Model
-from Model.as_unetr import ADSA_Net
+from Model.as_unetr import CDSA_Net
 
 # Local imports
 from Options.Options_x import Options_x_chengda_New_CNN_Encoder
@@ -46,7 +46,7 @@ def main():
     print(f"Using device: {device}")
     
     # Initialize model
-    model = ADSA_Net(
+    model = CDSA_Net(
         in_channels=2,  # ADC and DWI modalities
         out_channels=2,  # Background and lesion
         img_size=(16, 256, 256),

@@ -1,6 +1,9 @@
 .DS_Store
+*.json
+*.csv
 gradcam_multi_component/*
 gradcam_compare/*
+wilcoxon*.py
 
 dataset/*
 

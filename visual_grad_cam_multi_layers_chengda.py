@@ -29,7 +29,7 @@ from skimage import measure
 from monai.transforms import ClipIntensityPercentiles
 from pytorch_grad_cam import GradCAM
 
-from Model.as_unetr import ADSA_Net
+from Model.as_unetr import CDSA_Net
 from Model.ablation import Backbone_Baseline, Backbone_SAEB, Backbone_ACF, Backbone_MRE, Backbone_MRE_ACF
 
 
@@ -150,8 +150,8 @@ def build_model(model_type: str, device: torch.device) -> torch.nn.Module:
             norm_name="instance",
         ).to(device)
         return model
-    elif model_type == "ADSA_Net":
-        model = ADSA_Net(
+    elif model_type == "CDSA_Net":
+        model = CDSA_Net(
             in_channels=2,
             out_channels=2,
             img_size=(16, 256, 256),
@@ -174,7 +174,7 @@ def _get_attr_by_path(model: torch.nn.Module, path: str) -> torch.nn.Module:
 
 
 def _fix_adsa_checkpoint_keys(state_dict: dict) -> dict:
-    """Fix ADSA_Net checkpoints where fusion blocks were named gre_dcgf_X instead of BiCR_X.
+    """Fix CDSA_Net checkpoints where fusion blocks were named gre_dcgf_X instead of BiCR_X.
 
     Only renames keys containing 'gre_dcgf_'. Other keys are kept unchanged.
     """
@@ -211,7 +211,7 @@ SHOW_TITLES = False
 MODEL_CFG = {
     "name": "ADSA-Net",
     "checkpoint": "checkpoints/SegTumor_DIY_New_CNN_Encoder/best_dice_model.pth",
-    "model_type": "ADSA_Net",
+    "model_type": "CDSA_Net",
     # Attribute paths on the model to visualize
     "layers": [
         "conv_head",
@@ -291,7 +291,7 @@ def visualize_case() -> Path:
     checkpoint = torch.load(ckpt_path, map_location=device, weights_only=True)
     state_dict = checkpoint.get("model_state_dict", checkpoint)
 
-    if model_type == "ADSA_Net":
+    if model_type == "CDSA_Net":
         state_dict = _fix_adsa_checkpoint_keys(state_dict)
         model.load_state_dict(state_dict, strict=False)
     else:

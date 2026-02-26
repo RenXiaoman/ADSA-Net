@@ -36,7 +36,6 @@ python compare_models.py --inputs infer/SegTumor_ALIEN_chengda_infer/val_results
 
 python compare_models.py --inputs infer/SegTumor_UNet_chengda_infer/val_results/A_Summary.json --names "3D UNet" 
 
-
 python compare_models.py --inputs infer/SegTumor_Attention_UNet_chengda_infer/val_results/A_Summary.json --names "Attention_UNet"  --existing model_comparison.xlsx --output model_comparison.xlsx
 
 python compare_models.py --inputs infer/SegTumor_UNETR_chengda_infer/val_results/A_Summary.json --names "UNETR"  --existing model_comparison.xlsx --output model_comparison.xlsx

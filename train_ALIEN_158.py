@@ -3,7 +3,7 @@ from pathlib import Path
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.amp import autocast, GradScaler
+# from torch.amp import autocast, GradScaler
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from os.path import join
@@ -15,11 +15,9 @@ from monai.losses import DiceFocalLoss
 from monai.transforms import Compose
 
 #### Model
-from Model.as_unetr import CDSA_Net
-# from picai_baseline.unet.training_setup.neural_networks.unets import UNet
-
+from Model.ALIEN import ALIEN
 # Local imports
-from Options.Options_x_PICAI import Options_x_PICAI_DWIAsLeading
+from Options.Options_ALIEN import Options_ALIEN_158
 from dataset.dataset_nnunet import Lits_DataSet
 from utils.nnunet_augmentation import nnunet_style_augmentation
 
@@ -34,7 +32,7 @@ def poly_lr(epoch, max_epochs, initial_lr, exponent=0.9):
 
 def main():
     # Parse options
-    opt_parser = Options_x_PICAI_DWIAsLeading()
+    opt_parser = Options_ALIEN_158()
     opt = opt_parser.parse()
     
     # Set device
@@ -47,16 +45,17 @@ def main():
     print(f"Using device: {device}")
     
     # Initialize model
-    model = CDSA_Net(
-        in_channels=2,  # ADC and DWI modalities
-        out_channels=2,  # Background and lesion
-        img_size=(16, 256, 256),
-        feature_size=16,
-        hidden_size=768,
-        mlp_dim=3072,
-        num_heads=8,
-        norm_name='instance'
-    ).to(device)
+    # model = UNETR(
+    #     in_channels=2,  # ADC and DWI modalities
+    #     out_channels=2,  # Background and lesion
+    #     img_size=(16, 256, 256),
+    #     feature_size=16,
+    #     hidden_size=768,
+    #     mlp_dim=3072,
+    #     num_heads=8,
+    #     norm_name='instance'
+    # ).to(device)
+    model = ALIEN(n_classes=2, n_channels=3, trilinear=True).to(device)
     
     
     # Resume training from checkpoint if specified
@@ -71,36 +70,11 @@ def main():
     # Define optimizer (nnUNet style: SGD with momentum 0.99)
     optimizer = optim.SGD(model.parameters(), lr=opt.lr, momentum=0.99, nesterov=True, weight_decay=3e-5)
     
-    if opt.resume:
-        if Path(opt.resume).exists():
-            print(f"Resuming training from: {opt.resume}")
-            checkpoint = torch.load(opt.resume)
-            model.load_state_dict(checkpoint['model_state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            start_epoch = checkpoint['epoch'] + 1
-            best_val_loss = checkpoint['best_val_loss']
-            best_val_dice = checkpoint['best_val_dice']
-            best_val_miou = checkpoint['best_val_miou']
-            best_loss_epoch = checkpoint['best_loss_epoch']
-            best_dice_epoch = checkpoint['best_dice_epoch']
-            best_miou_epoch = checkpoint['best_miou_epoch']
-            
-            # Restore learning rate from checkpoint
-            if 'current_lr' in checkpoint:
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = checkpoint['current_lr']
-                print(f"Resumed learning rate: {checkpoint['current_lr']:.6f}")
-            
-            print(f"Resumed from epoch {start_epoch}, best val loss: {best_val_loss:.4f}")
-        else:
-            print(f"Warning: Checkpoint {opt.resume} not found, starting from scratch")
-    
     # Print model parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    
-    print(f"Total parameters: {total_params/1e6:.2f}M")
-    print(f"Trainable parameters: {trainable_params/1e6:.2f}M")
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
 
     # Define loss function - adjusted for small lesion segmentation
     dice_focal_loss = DiceFocalLoss(include_background=False,
@@ -108,11 +82,9 @@ def main():
                                     to_onehot_y=True,
                                     gamma=2.0,           # Lower gamma for less extreme focal weighting
                                     weight=[0.2, 0.8],    # Higher weight for lesion class
+                                    # lambda_dice=0.5,      # Balanced dice and focal
+                                    # lambda_focal=0.5
                                     ).to(device)
-    
-    def calculate_loss(outputs, labels, loss_fn):
-        """计算损失（单输出模式）"""
-        return loss_fn(outputs, labels)
     
     # Metrics calculation functions
     def calculate_dice(preds, targets):
@@ -178,8 +150,8 @@ def main():
         plt.close()
     
 
-    # Mixed precision training
-    scaler = GradScaler('cuda')
+    # Mixed precision training disabled
+    # scaler = GradScaler('cuda')
     
     # Create results directory
     results_dir = Path(opt.checkpoints_dir) / opt.task_name
@@ -231,29 +203,22 @@ def main():
         
         for batch_idx, batch_data in enumerate(tqdm(train_dataloader, desc=f'Epoch {epoch+1}/{opt.epoch} [Train]')):
             ADC, DWI, T2W, labels, patient_names = batch_data
-            # inputs = torch.cat([ADC, DWI, T2W], dim=1).to(device)  # 合并ADC和T2W和DWI作为输入
-            
-            # inputs = torch.cat([ADC, DWI, T2W], dim=1).to(device)  # 原始输入 T2W为主模态
-            inputs = torch.cat([ADC, T2W, DWI], dim=1).to(device)    # DWI为主模态
-            # inputs = torch.cat([T2W, DWI, ADC], dim=1).to(device)  # ADC为主模态
-            
+            inputs = torch.cat([ADC, DWI, T2W], dim=1).to(device)  # 合并ADC和T2W和DWI作为输入
             labels = labels.to(device)
             
             optimizer.zero_grad()
             
-            with autocast('cuda'):
-                outputs = model(inputs)
-                
-                # 计算损失（单输出模式）
-                loss = calculate_loss(outputs, labels, dice_focal_loss)
-                
-                # 计算预测结果
-                outputs_softmax = torch.softmax(outputs, dim=1)
-                preds = torch.argmax(outputs_softmax, dim=1, keepdim=True)
+            outputs = model(inputs)
             
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            # Calculate loss
+            loss = dice_focal_loss(outputs, labels)
+            
+            # Calculate metrics - apply softmax first since model outputs logits
+            outputs_softmax = torch.softmax(outputs, dim=1)
+            preds = torch.argmax(outputs_softmax, dim=1, keepdim=True)
+            
+            loss.backward()
+            optimizer.step()
             
             train_loss += loss.item()
             
@@ -280,20 +245,17 @@ def main():
         with torch.no_grad():
             for batch_idx, batch_data in enumerate(tqdm(val_dataloader, desc=f'Epoch {epoch+1}/{opt.epoch} [Val]')):
                 ADC, DWI, T2W, labels, patient_names = batch_data
-                # inputs = torch.cat([ADC, DWI, T2W], dim=1).to(device)  # 原始输入 T2W为主模态
-                inputs = torch.cat([ADC, T2W, DWI], dim=1).to(device)    # DWI为主模态
-                # inputs = torch.cat([T2W, DWI, ADC], dim=1).to(device)  # ADC为主模态
+                inputs = torch.cat([ADC, DWI, T2W], dim=1).to(device)  # 合并T2W和DWI作为输入
                 labels = labels.to(device)
 
-                with autocast('cuda'):
-                    outputs = model(inputs)
-                    
-                    # 计算损失（单输出模式）
-                    loss = calculate_loss(outputs, labels, dice_focal_loss)
-                    
-                    # 计算预测结果
-                    outputs_softmax = torch.softmax(outputs, dim=1)
-                    preds = torch.argmax(outputs_softmax, dim=1, keepdim=True)
+                outputs = model(inputs)
+                
+                # Calculate loss
+                loss = dice_focal_loss(outputs, labels)
+                
+                # Calculate metrics - apply softmax first since model outputs logits
+                outputs_softmax = torch.softmax(outputs, dim=1)
+                preds = torch.argmax(outputs_softmax, dim=1, keepdim=True)
 
                 val_loss += loss.item()
                 

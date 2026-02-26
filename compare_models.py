@@ -283,7 +283,7 @@ if __name__ == "__main__":
         epilog="""
 Examples:
   # 1. Create new comparison from multiple JSON files
-  python compare_models.py --inputs model1.json model2.json model3.json --names "UNET" "ADSA_Net" "Transformer"
+  python compare_models.py --inputs model1.json model2.json model3.json --names "UNET" "CDSA_Net" "Transformer"
   
   # 2. Add a single new model to existing comparison (incremental update)
   python compare_models.py --inputs new_model.json --names "NewModel" --existing comparison.xlsx --output comparison.xlsx

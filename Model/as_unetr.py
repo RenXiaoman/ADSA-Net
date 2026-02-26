@@ -286,7 +286,7 @@ class GRE_DCGF3D(nn.Module):
 
 
 
-class ADSA_Net(nn.Module):
+class CDSA_Net(nn.Module):
     """
     UNETR based on: "Hatamizadeh et al.,
     UNETR: Transformers for 3D Medical Image Segmentation <https://arxiv.org/abs/2103.10504>"
@@ -946,7 +946,7 @@ class BiCR3D_MLP(nn.Module):
 # -----------------------------------------
 if __name__ == '__main__':
     device = torch.device('cuda:0' if torch.cuda.is_available() else "cpu")
-    small_unetr = ADSA_Net(
+    small_unetr = CDSA_Net(
         in_channels=2,  # ADC and DWI modalities
         out_channels=2,  # Background and lesion
         img_size=(16, 256, 256),

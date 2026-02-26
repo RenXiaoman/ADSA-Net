@@ -28,7 +28,7 @@ import cv2
 from monai.transforms import ClipIntensityPercentiles
 from pytorch_grad_cam import GradCAM
 
-from Model.as_unetr import ADSA_Net
+from Model.as_unetr import CDSA_Net
 from Model.ablation import Backbone_Baseline, Backbone_SAEB, Backbone_ACF, Backbone_MRE, Backbone_MRE_ACF
 
 
@@ -149,8 +149,8 @@ def build_model(model_type: str, device: torch.device) -> torch.nn.Module:
             norm_name="instance",
         ).to(device)
         return model
-    elif model_type == "ADSA_Net":
-        model = ADSA_Net(
+    elif model_type == "CDSA_Net":
+        model = CDSA_Net(
             in_channels=2,  # ADC and DWI modalities
             out_channels=2,  # Background and lesion
             img_size=(16, 256, 256),
@@ -219,7 +219,7 @@ MODELS_CFG = [
     {
         "name": "ADSA-Net",
         "checkpoint": "checkpoints/SegTumor_DIY_PICAI_New_CNN_Encoder/best_dice_model.pth",
-        "model_type": "ADSA_Net",
+        "model_type": "CDSA_Net",
         "target_layer": "decoder1",
     },
     

@@ -19,7 +19,7 @@ from Model.as_unetr import CDSA_Net
 # from picai_baseline.unet.training_setup.neural_networks.unets import UNet
 
 # Local imports
-from Options.Options_x_PICAI import Options_x_PICAI_DWIAsLeading
+from Options.Options_x_PICAI import Options_x_158
 from dataset.dataset_nnunet import Lits_DataSet
 from utils.nnunet_augmentation import nnunet_style_augmentation
 
@@ -34,7 +34,7 @@ def poly_lr(epoch, max_epochs, initial_lr, exponent=0.9):
 
 def main():
     # Parse options
-    opt_parser = Options_x_PICAI_DWIAsLeading()
+    opt_parser = Options_x_158()
     opt = opt_parser.parse()
     
     # Set device
@@ -233,8 +233,8 @@ def main():
             ADC, DWI, T2W, labels, patient_names = batch_data
             # inputs = torch.cat([ADC, DWI, T2W], dim=1).to(device)  # 合并ADC和T2W和DWI作为输入
             
-            # inputs = torch.cat([ADC, DWI, T2W], dim=1).to(device)  # 原始输入 T2W为主模态
-            inputs = torch.cat([ADC, T2W, DWI], dim=1).to(device)    # DWI为主模态
+            inputs = torch.cat([ADC, DWI, T2W], dim=1).to(device)  # 原始输入 T2W为主模态
+            # inputs = torch.cat([ADC, T2W, DWI], dim=1).to(device)    # DWI为主模态
             # inputs = torch.cat([T2W, DWI, ADC], dim=1).to(device)  # ADC为主模态
             
             labels = labels.to(device)
@@ -280,8 +280,8 @@ def main():
         with torch.no_grad():
             for batch_idx, batch_data in enumerate(tqdm(val_dataloader, desc=f'Epoch {epoch+1}/{opt.epoch} [Val]')):
                 ADC, DWI, T2W, labels, patient_names = batch_data
-                # inputs = torch.cat([ADC, DWI, T2W], dim=1).to(device)  # 原始输入 T2W为主模态
-                inputs = torch.cat([ADC, T2W, DWI], dim=1).to(device)    # DWI为主模态
+                inputs = torch.cat([ADC, DWI, T2W], dim=1).to(device)  # 原始输入 T2W为主模态
+                # inputs = torch.cat([ADC, T2W, DWI], dim=1).to(device)    # DWI为主模态
                 # inputs = torch.cat([T2W, DWI, ADC], dim=1).to(device)  # ADC为主模态
                 labels = labels.to(device)
 

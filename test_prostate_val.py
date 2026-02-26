@@ -11,8 +11,11 @@ import argparse
 import json
 import matplotlib.pyplot as plt
 from skimage import measure
-from Model.as_unetr import ADSA_Net
+from scipy.ndimage import binary_erosion, generate_binary_structure
+from scipy.spatial import cKDTree
+from Model.as_unetr import CDSA_Net
 from Model.ALIEN import ALIEN
+from picai_baseline.unet.training_setup.neural_networks.unets import UNet
 
 # Model
 # from picai_baseline.unet.training_setup.neural_networks.unets import UNet
@@ -55,12 +58,104 @@ def calculate_miou(preds, targets):
     smooth = 1e-6
     preds_flat = preds.view(-1)
     targets_flat = targets.view(-1)
-    
+
     intersection = (preds_flat * targets_flat).sum()
     union = preds_flat.sum() + targets_flat.sum() - intersection
-    
+
     iou = (intersection + smooth) / (union + smooth)
     return iou.item()
+
+def get_surface_points(binary_mask):
+    """
+    Get surface points of a binary mask
+
+    Args:
+        binary_mask: Binary mask (numpy array)
+
+    Returns:
+        Array of surface point coordinates
+    """
+    # Create a structuring element for erosion (26-connectivity for 3D)
+    struct = generate_binary_structure(3, 3)
+
+    # Erode the mask
+    eroded = binary_erosion(binary_mask, struct)
+
+    # Surface = original mask - eroded mask
+    surface = binary_mask.astype(np.uint8) - eroded.astype(np.uint8)
+
+    # Get coordinates of surface points
+    surface_points = np.argwhere(surface > 0)
+
+    return surface_points
+
+def calculate_hd95(pred, target, percentile=95):
+    """
+    Calculate 95th percentile Hausdorff Distance (HD95)
+
+    HD95 is calculated as:
+    1. Get surface points of both prediction and ground truth
+    2. For each surface point in pred, find the minimum distance to target surface
+    3. For each surface point in target, find the minimum distance to pred surface
+    4. Take the 95th percentile of all these distances
+
+    Args:
+        pred: Binary prediction mask (numpy array)
+        target: Binary ground truth mask (numpy array)
+        percentile: Percentile for Hausdorff distance (default: 95)
+
+    Returns:
+        HD95 value (float)
+    """
+    # Convert to binary if not already
+    pred = (pred > 0).astype(np.uint8)
+    target = (target > 0).astype(np.uint8)
+
+    # Check if both pred and target are empty
+    if pred.sum() == 0 and target.sum() == 0:
+        return 0.0
+
+    # If one is empty and the other is not, return a large distance
+    if pred.sum() == 0 or target.sum() == 0:
+        # Return a large but finite value (e.g., image diagonal)
+        max_distance = np.sqrt(sum(dim**2 for dim in pred.shape))
+        return float(max_distance)
+
+    try:
+        # Get surface points
+        pred_surface = get_surface_points(pred)
+        target_surface = get_surface_points(target)
+
+        if len(pred_surface) == 0 or len(target_surface) == 0:
+            # If no surface points, return 0
+            return 0.0
+
+        # Use KDTree for efficient distance calculation
+        # Calculate distances from pred surface to target surface
+        target_tree = cKDTree(target_surface)
+        distances_pred_to_target, _ = target_tree.query(pred_surface, k=1)
+
+        # Calculate distances from target surface to pred surface
+        pred_tree = cKDTree(pred_surface)
+        distances_target_to_pred, _ = pred_tree.query(target_surface, k=1)
+
+        # Combine all distances (cKDTree.query returns numpy array)
+        all_distances = np.concatenate([distances_pred_to_target, distances_target_to_pred])
+
+        # Calculate 95th percentile
+        hd95 = np.percentile(all_distances, percentile)
+
+        # Handle NaN or Inf values
+        if np.isnan(hd95) or np.isinf(hd95):
+            return 0.0
+
+        return float(hd95)
+
+    except Exception as e:
+        print(f"Warning: Error calculating HD95: {e}")
+        # Return a default value if calculation fails
+        max_distance = np.sqrt(sum(dim**2 for dim in pred.shape))
+        return float(max_distance)
 
 def calculate_dice_intervals(dice_scores):
     """Calculate distribution of Dice scores across intervals"""
@@ -163,7 +258,7 @@ def save_multimodal_slices_with_contours(adc_data, dwi_data, t2w_data, gt_data, 
     print(f"Saved 16 multimodal slices for {patient_name} to {patient_dir}")
 
 
-def fix_adsa_net_checkpoint(state_dict):
+def fix_cdsa_net_checkpoint(state_dict):
     new_state_dict = {}
     for key, value in state_dict.items():
         if 'gre_dcgf_' in key:
@@ -188,7 +283,7 @@ def main():
     print(f"Using device: {device}")
     
     # Load model
-    model = ADSA_Net(
+    model = CDSA_Net(
         in_channels=2,  # ADC and DWI modalities
         out_channels=2,  # Background and lesion
         img_size=(16, 256, 256),
@@ -236,13 +331,21 @@ def main():
     #               img_size=(16, 256, 256), 
     #               spatial_dims=3).to(device)
     
+    # model = UNet(  # For T2W only
+    #     spatial_dims=3,
+    #     in_channels=1,  # Modified for T2W only
+    #     out_channels=2,
+    #     strides=[(2, 2, 2), (1, 2, 2), (1, 2, 2), (1, 2, 2), (2, 2, 2)],
+    #     channels=[32, 64, 128, 256, 512, 1024],
+    #     ).to(device)
+    
     
     # Load checkpoint
     checkpoint = torch.load(args.model_path, map_location=device, weights_only=True)
     
     checkpoint = checkpoint["model_state_dict"]
     
-    checkpoint = fix_adsa_net_checkpoint(checkpoint)  # 注释即可
+    checkpoint = fix_cdsa_net_checkpoint(checkpoint)  # 注释即可
     
     model.load_state_dict(checkpoint)
     model.eval()
@@ -255,7 +358,7 @@ def main():
     else:
         experiment_name = Path(args.model_path).stem  # Fallback to model file name
         
-    experiment_name = '111111'
+    experiment_name = 'Chengda_Test'
 
     suffix = "_infer" if args.mode == "val" else "_test"
     parent_dir = Path(f"infer/{experiment_name}{suffix}")
@@ -299,6 +402,7 @@ def main():
     # Test loop
     all_dice_scores = []
     all_miou_scores = []
+    all_hd95_scores = []
     case_metrics = []  # Store metrics for each individual case
     
     with torch.no_grad():
@@ -307,7 +411,7 @@ def main():
             inputs = torch.cat([ADC, DWI, T2W], dim=1).to(device)  # 原始输入 T2W为主模态
             # inputs = torch.cat([ADC, T2W, DWI], dim=1).to(device)    # DWI为主模态
             # inputs = torch.cat([T2W, DWI, ADC], dim=1).to(device)  # ADC为主模态
-            
+            # inputs = DWI.to(device)
             
             labels = labels.to(device)
             
@@ -329,27 +433,75 @@ def main():
                 preds_cleaned = torch.from_numpy(pred_numpy_cleaned).unsqueeze(0).unsqueeze(0).to(device)
                 dice_score = calculate_dice(preds_cleaned, labels)
                 miou_score = calculate_miou(preds_cleaned, labels)
+                # Calculate HD95 using cleaned predictions
+                gt_data = labels.squeeze().cpu().numpy().astype(np.uint8)
+                hd95_score = calculate_hd95(pred_numpy_cleaned, gt_data, percentile=95)
                 # Use cleaned predictions for saving
                 pred_numpy_to_save = pred_numpy_cleaned
             else:
                 # Calculate metrics using original predictions
                 dice_score = calculate_dice(preds, labels)
                 miou_score = calculate_miou(preds, labels)
+                # Calculate HD95 using original predictions
+                gt_data = labels.squeeze().cpu().numpy().astype(np.uint8)
+                hd95_score = calculate_hd95(pred_numpy, gt_data, percentile=95)
                 # Use original predictions for saving
                 pred_numpy_to_save = pred_numpy
             
             all_dice_scores.append(dice_score)
             all_miou_scores.append(miou_score)
-            
+            all_hd95_scores.append(hd95_score)
+
             # Store individual case metrics (rounded to 4 decimal places)
             case_metrics.append({
                 'patient_name': patient_name,
                 'dice_score': round(dice_score, 4),
-                'miou_score': round(miou_score, 4)
+                'miou_score': round(miou_score, 4),
+                'hd95_score': round(hd95_score, 4)
             })
             
             # Create NIfTI image (save predictions)
-            pred_img = nib.Nifti1Image(pred_numpy_to_save, np.eye(4))
+            # 获取原始图像的方向矩阵和形状
+            try:
+                # 构建原始图像路径（使用T2W图像获取方向矩阵）
+                original_img_path = Path(args.data_path) / images_dir / f"{patient_name}_0000.nii.gz"
+                if original_img_path.exists():
+                    original_img = nib.load(original_img_path)
+                    affine_matrix = original_img.affine
+                    original_shape = original_img.shape
+                    # print(f"原始图像形状: {original_shape}, 方向矩阵: {affine_matrix}")
+                else:
+                    print(f"警告: 原始图像不存在: {original_img_path}")
+                    # 尝试其他可能的路径
+                    alt_path = Path(args.data_path) / "imagesTr" / f"{patient_name}_0000.nii.gz"
+                    if alt_path.exists():
+                        original_img = nib.load(alt_path)
+                        affine_matrix = original_img.affine
+                        original_shape = original_img.shape
+                        # print(f"使用备用路径方向矩阵: {affine_matrix}")
+                    else:
+                        print(f"警告: 备用图像也不存在: {alt_path}")
+                        affine_matrix = np.eye(4)
+                        original_shape = None
+            except Exception as e:
+                print(f"警告: 获取方向矩阵失败: {e}")
+                affine_matrix = np.eye(4)
+                original_shape = None
+
+            # 检查预测数据的形状并转置为原始顺序
+            # SimpleITK的sitk.GetArrayFromImage()返回[z, y, x] (D, H, W)
+            # 但原始NIfTI文件的数据顺序是[x, y, z] (W, H, D)
+            # 需要将预测从[D, H, W]转置为[W, H, D]
+            if pred_numpy_to_save.ndim == 3:
+                # 转置: [D, H, W] -> [W, H, D]
+                pred_data_to_save = np.transpose(pred_numpy_to_save, (2, 1, 0))
+                if original_shape is not None and pred_data_to_save.shape != original_shape:
+                    print(f"警告: 转置后预测形状 {pred_data_to_save.shape} 与原始形状 {original_shape} 不匹配")
+            else:
+                print(f"警告: 预测数据维度不是3D: {pred_numpy_to_save.shape}")
+                pred_data_to_save = pred_numpy_to_save
+
+            pred_img = nib.Nifti1Image(pred_data_to_save, affine_matrix)
             pred_filename = output_dir / f"{patient_name}_pred.nii.gz"
             nib.save(pred_img, pred_filename)
             
@@ -363,20 +515,23 @@ def main():
             dwi_data = mri_data[1]  # DWI channel  
             t2w_data = mri_data[2]  # T2W channel
             
-            save_multimodal_slices_with_contours(adc_data, dwi_data, t2w_data, gt_data, pred_data, patient_name, slices_dir)
+            # save_multimodal_slices_with_contours(adc_data, dwi_data, t2w_data, gt_data, pred_data, patient_name, slices_dir)
             
-            print(f"Patient: {patient_name}, Dice: {dice_score:.4f}, mIoU: {miou_score:.4f}")
+            print(f"Patient: {patient_name}, Dice: {dice_score*100:.2f}, mIoU: {miou_score*100:.2f}, HD95: {hd95_score:.4f}")
     
     # Calculate overall metrics (rounded to 4 decimal places)
     avg_dice = round(np.mean(all_dice_scores), 4)
     avg_miou = round(np.mean(all_miou_scores), 4)
+    avg_hd95 = round(np.mean(all_hd95_scores), 4)
     std_dice = round(np.std(all_dice_scores), 4)
     std_miou = round(np.std(all_miou_scores), 4)
-    
+    std_hd95 = round(np.std(all_hd95_scores), 4)
+
     print(f"\n=== Overall Results ===")
     print(f"Connected component filtering: {'Enabled' if args.keep_largest_cc else 'Disabled'}")
-    print(f"Average Dice: {avg_dice:.4f} ± {std_dice:.4f}")
-    print(f"Average mIoU: {avg_miou:.4f} ± {std_miou:.4f}")
+    print(f"Average Dice: {avg_dice*100:.2f} ± {std_dice*100:.2f}")
+    print(f"Average mIoU: {avg_miou*100:.2f} ± {std_miou*100:.2f}")
+    print(f"Average HD95: {avg_hd95:.4f} ± {std_hd95:.4f}")
     print(f"All results saved to parent directory: {parent_dir}")
     print(f"- Predictions saved to: {output_dir}")
     print(f"- Slice images saved to: {slices_dir}")
@@ -391,10 +546,13 @@ def main():
         'case_metrics': case_metrics,  # Individual case metrics (already rounded)
         'dice_scores': [round(score, 4) for score in all_dice_scores],
         'miou_scores': [round(score, 4) for score in all_miou_scores],
+        'hd95_scores': [round(score, 4) for score in all_hd95_scores],
         'average_dice': avg_dice,
         'average_miou': avg_miou,
+        'average_hd95': avg_hd95,
         'std_dice': std_dice,
-        'std_miou': std_miou
+        'std_miou': std_miou,
+        'std_hd95': std_hd95
     }
     
     results_file = output_dir / 'test_results.json'
@@ -416,8 +574,10 @@ def main():
         'overall_metrics': {
             'average_dice': avg_dice,
             'average_miou': avg_miou,
+            'average_hd95': avg_hd95,
             'std_dice': std_dice,
-            'std_miou': std_miou
+            'std_miou': std_miou,
+            'std_hd95': std_hd95
         },
         'dice_interval_statistics': dice_interval_stats
     }

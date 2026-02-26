@@ -17,20 +17,20 @@ from monai.transforms import ClipIntensityPercentiles, NormalizeIntensity, Scale
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image, preprocess_image
 
-from Model.as_unetr import ADSA_Net
+from Model.as_unetr import CDSA_Net
 import matplotlib.pyplot as plt
 from pylab import *
 # from monai.visualize import GradCAM, CAM, OcclusionSensitivity
 
 
 
-class ADSA_Net_GradCAM:
+class CDSA_Net_GradCAM:
     def __init__(self, model, target_layer):
         """
         初始化Grad-CAM可视化
         
         参数:
-            model: ADSA_Net模型
+            model: CDSA_Net模型
             target_layer: 目标层，如model.vit.blocks[-1].norm1
         """
         self.model = model
@@ -246,7 +246,7 @@ model_path = f'checkpoints/{model_name}/best_dice_model.pth'
 
 name = '10005_1000005'
 # 10005_1000005 10040_1000040
-model = ADSA_Net(
+model = CDSA_Net(
     in_channels=2,  # ADC and DWI modalities
     out_channels=2,  # Background and lesion
     img_size=(16, 256, 256),

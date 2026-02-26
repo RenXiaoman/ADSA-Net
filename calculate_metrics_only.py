@@ -21,6 +21,7 @@ parser.add_argument('--gt_dir', type=str, required=False, default="dataset/PI-CA
 parser.add_argument('--output_file', type=str, default='metrics_results.json', help='Output JSON file for metrics')
 parser.add_argument('--percentile', type=int, default=95, help='Percentile for Hausdorff distance (default: 95)')
 parser.add_argument('--reference_json', type=str, default=None, help='Optional: Path to reference JSON file to compare results (e.g., A_Summary.json)')
+parser.add_argument('--pred_suffix', type=str, default=None, help='Custom suffix to remove from prediction filenames (e.g., "_pred_cleaned")')
 args = parser.parse_args()
 
 
@@ -148,26 +149,30 @@ def calculate_hd95(pred, target, percentile=95):
 def get_patient_name_from_pred_file(pred_file):
     """
     Extract patient name from prediction filename
-    Same logic as dataset: split by '.' and take first part, then remove '_pred' suffix
+    Same logic as dataset: split by '.' and take first part, then remove prediction suffix
     For 'ChenHuiFu_pred.nii.gz' -> 'ChenHuiFu'
+    For 'ChenHuiFu_pred_cleaned.nii.gz' -> 'ChenHuiFu'
     """
     # Get filename without path
     filename = pred_file.name  # e.g., 'ChenHuiFu_pred.nii.gz'
-    
+
     # Split by '.' and take first part (same as dataset: str(img_path.name).split('.')[0])
     # This handles both .nii.gz and .nii cases
     base_name = filename.split('.')[0]  # e.g., 'ChenHuiFu_pred'
-    
-    # Remove common prediction suffixes
-    if base_name.endswith('_pred'):
-        return base_name[:-5]  # Remove '_pred'
-    elif base_name.endswith('_prediction'):
-        return base_name[:-11]  # Remove '_prediction'
-    elif base_name.endswith('_pred_mask'):
-        return base_name[:-10]  # Remove '_pred_mask'
-    else:
-        # If no recognized suffix, return as is (might be already correct)
-        return base_name
+
+    # First, try user-provided suffix if specified
+    if args.pred_suffix and base_name.endswith(args.pred_suffix):
+        return base_name[:-len(args.pred_suffix)]  # Remove custom suffix
+
+    # Default suffixes to try (in order)
+    default_suffixes = ['_pred', '_prediction', '_pred_mask', '_pred_cleaned']
+
+    for suffix in default_suffixes:
+        if base_name.endswith(suffix):
+            return base_name[:-len(suffix)]  # Remove suffix
+
+    # If no recognized suffix, return as is (might be already correct)
+    return base_name
 
 
 def find_matching_gt_file(patient_name, gt_dir):
@@ -211,19 +216,41 @@ def main():
         raise ValueError(f"Ground truth directory does not exist: {gt_dir}")
     
     # Find all prediction files
-    pred_files = sorted(list(pred_dir.glob("*_pred.nii.gz")))
+    # Try different suffixes in order of priority
+    pred_files = []
+    suffixes_to_try = []
+    used_suffix = None
+
+    # User-provided suffix has highest priority
+    if args.pred_suffix:
+        suffixes_to_try.append(args.pred_suffix)
+
+    # Default suffixes
+    suffixes_to_try.extend(['_pred', '_prediction', '_pred_mask', '_pred_cleaned'])
+
+    for suffix in suffixes_to_try:
+        pattern = f"*{suffix}.nii.gz"
+        pred_files = sorted(list(pred_dir.glob(pattern)))
+        if len(pred_files) > 0:
+            used_suffix = suffix
+            print(f"Found {len(pred_files)} prediction files with suffix '{suffix}'")
+            break
+
+    # If no files found with any suffix, try all .nii.gz files
     if len(pred_files) == 0:
-        # Try without _pred suffix
         pred_files = sorted(list(pred_dir.glob("*.nii.gz")))
         if len(pred_files) == 0:
             raise ValueError(f"No prediction files found in {pred_dir}")
         else:
-            print(f"Warning: Found {len(pred_files)} files without '_pred' suffix. Make sure they are prediction files.")
-    
+            print(f"Warning: Found {len(pred_files)} files without recognized suffix. Make sure they are prediction files.")
+            used_suffix = None
+
     # Get all GT files for verification
     gt_files_list = sorted(list(gt_dir.glob("*.nii.gz")))
-    print(f"Found {len(pred_files)} prediction files")
-    print(f"Found {len(gt_files_list)} ground truth files")
+    if used_suffix:
+        print(f"Using prediction files with suffix: '{used_suffix}'")
+    print(f"Total prediction files: {len(pred_files)}")
+    print(f"Total ground truth files: {len(gt_files_list)}")
     
 
     # Calculate metrics for each case
@@ -432,11 +459,11 @@ def main():
     }
     
     # Save to JSON file
-    # output_file.parent.mkdir(parents=True, exist_ok=True)
-    # with open(output_file, 'w', encoding='utf-8') as f:
-    #     json.dump(results, f, indent=4, ensure_ascii=False)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(results, f, indent=4, ensure_ascii=False)
     
-    # print(f"\nResults saved to: {output_file}")
+    print(f"\nResults saved to: {output_file}")
 
 
 if __name__ == "__main__":
