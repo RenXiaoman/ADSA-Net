@@ -204,7 +204,7 @@ class FusionLayerDual(nn.Module):
 
 
 # -----------------------------------------
-# Adaptive Confidence Fusion（细粒度）
+#  Voxel-wise Confidence-Guided Refinement 
 # out = Conv3d( Fusion(Concat) + Att(T2) + Att(Aux) )
 # -----------------------------------------
 class ACF(nn.Module):
@@ -226,7 +226,7 @@ class ACF(nn.Module):
 
 
 # -----------------------------------------
-# Modality Reliability Estimator
+# Sample-wise Modality Gating (SMG) 
 # 基于样本级全局统计，softmax 生成两路权重，保证和为1
 # 返回：coarse 融合 + 权重（便于可解释性）
 # -----------------------------------------

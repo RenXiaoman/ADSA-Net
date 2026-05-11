@@ -5,7 +5,9 @@ gradcam_multi_component/*
 gradcam_compare/*
 wilcoxon*.py
 
-dataset/*
+dataset/ChengdaOnlyCSPca/*
+dataset/PI-CAI/*
+dataset/Prostate158/*
 
 checkpoints/*
 ablation_PICAI/

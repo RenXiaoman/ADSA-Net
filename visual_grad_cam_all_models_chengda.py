@@ -30,6 +30,8 @@ from pytorch_grad_cam import GradCAM
 
 from Model.as_unetr import CDSA_Net
 from Model.ablation import Backbone_Baseline, Backbone_SAEB, Backbone_ACF, Backbone_MRE, Backbone_MRE_ACF
+import warnings
+warnings.filterwarnings('ignore', category=FutureWarning, module='timm')
 
 
 clip = ClipIntensityPercentiles(lower=0.5, upper=99.5, channel_wise=False)
@@ -179,7 +181,7 @@ def build_model(model_type: str, device: torch.device) -> torch.nn.Module:
 # User configuration (edit here)
 # ============================
 
-CASE_ID = "YangHua"
+CASE_ID = "TianGuoHong"
 SLICE_INDEX = 9
 
 # Visualization crop size around GT center (in pixels). Set to None to disable cropping.

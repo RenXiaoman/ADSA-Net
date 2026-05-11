@@ -26,7 +26,7 @@ from Model.ablation import Backbone_SAEB, Backbone_ACF, Backbone_MRE, Backbone_B
 from dataset.dataset_nnunet import Lits_DataSet
 
 parser = argparse.ArgumentParser(description='Test prostate validation set')
-parser.add_argument('--model_path', type=str,default='checkpoints/SegTumor_DIY_New_CNN_Encoder/best_dice_model.pth', required=False, help='Path to trained model checkpoint')
+parser.add_argument('--model_path', type=str,default='checkpoints/SegTumor_DIY_chengda_Backbone/model_epoch_300.pth', required=False, help='Path to trained model checkpoint')
 
 # parser.add_argument('--data_path', type=str, default='dataset/PI-CAI', help='Path to dataset')
 parser.add_argument('--data_path', type=str, default='dataset/ChengdaOnlyCSPca', help='Path to dataset')

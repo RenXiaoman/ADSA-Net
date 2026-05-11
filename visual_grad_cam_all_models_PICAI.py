@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+import warnings
+warnings.filterwarnings('ignore', category=FutureWarning, module='timm')
+
 """Visualize Grad-CAM heatmaps for multiple models on the same module.
 
 Configuration is done directly in this file (no JSON):
@@ -168,8 +171,8 @@ def build_model(model_type: str, device: torch.device) -> torch.nn.Module:
 # User configuration (edit here)
 # ============================
 
-CASE_ID = "10607_1000621"
-SLICE_INDEX = 0
+CASE_ID = "10262_1000266"
+SLICE_INDEX = 8
 
 # Visualization crop size around GT center (in pixels). Set to None to disable cropping.
 CROP_SIZE = 96

@@ -61,12 +61,28 @@ class Options_x_PICAI_New_CNN_Encoder(BaseOptions):
         parser.add_argument('--datapath', type=str, default='dataset/PI-CAI', help='path of the data')
         # parser.add_argument('--datapath', type=str, default='dataset/ChengdaOnlyCSPca', help='path of the data')
 
-        parser.add_argument('--task_name', type=str, default='SegTumor_DIY_PICAI_New_CNN_Encoder', help='the current task name')
+        parser.add_argument('--weight_decay', type=float, default=3e-5, help='weight decay')
+        parser.add_argument('--task_name', type=str, default='SegTumor_DIY_PICAI_DTWC', help='the current task name')
         parser.add_argument('--dice_weight', type=float, default=0.5, help='weight for Dice loss')
         parser.add_argument('--focal_weight', type=float, default=0.5, help='weight for Focal loss')
-        parser.add_argument('--batch_size', type=int, default=16, help='input train batch size')
+        parser.add_argument('--batch_size', type=int, default=8, help='input train batch size')
         parser.add_argument('--resume', type=bool, default=None, help='resume training from checkpoint')
         parser.set_defaults(gpu_ids='0')  # specify GPU ids
+        self.isTrain = True
+        return parser
+    
+class Options_x_PICAI_Improved(BaseOptions):
+    def initialize(self, parser):
+        parser = BaseOptions.initialize(self, parser)
+        parser.add_argument('--checkpoints_dir', type=str, default='./checkpoints', help='models are saved here')
+        parser.add_argument('--num_threads', default=12, type=int, help='# threads for loading data')
+        parser.add_argument('--datapath', type=str, default='dataset/PI-CAI', help='path of the data')
+        
+        parser.add_argument('--task_name', type=str, default='SegTumor_DIY_PICAI_Improved', help='the current task name')
+        parser.add_argument('--batch_size', type=int, default=8, help='input train batch size')
+        parser.add_argument('--resume', type=bool, default=None, help='resume training from checkpoint')
+        parser.add_argument('--weight_decay', type=float, default=1e-4, help='weight decay')
+        parser.set_defaults(gpu_ids='1', epoch=1000, lr=3e-4)
         self.isTrain = True
         return parser
     
